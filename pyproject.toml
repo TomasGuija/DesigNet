@@ -1,0 +1,43 @@
+[project]
+name = "designet"
+description = "Font Typeface AI Generation"
+version = "1.0"
+authors = [
+    { name = "Iago Suárez", email = "iagosuarz@gmail.com" },
+    { name = "Tomas Guija-Valiente", email = "tomasguija@gmail.com" },
+]
+readme = "README.md"
+requires-python = ">=3.8"
+license = { file = "LICENSE" }
+classifiers = [
+    "Programming Language :: Python :: 3",
+]
+dependencies = [
+    "torch>=2.6.0",
+    "torchvision>=0.16",
+    "numpy>=2.0.0",
+    "matplotlib",
+    "Pillow>=9.5.0",
+    "huggingface_hub>=0.20.0",
+    "safetensors>=0.4.0",
+]
+
+urls = { Repository = "https://github.com/TomasGuija/DesigNet" }
+
+[project.optional-dependencies]
+dev = ["flake8", "black", "isort"]
+
+[tool.setuptools.packages.find]
+include = ["designet*"]
+
+[tool.isort]
+profile = "black"
+
+[tool.black]
+line-length = 120
+
+[flake8]
+max-line-length = 120
+
+[tool.pylint]
+ignore = "my_folder,some_other_folder"
