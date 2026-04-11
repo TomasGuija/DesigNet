@@ -11,8 +11,6 @@
 
 This is the official code for the paper "DesigNet:  Learning to Draw Vector Graphics as Designers Do". It includes the inference code, both for self-reconstruction with our variational autoencoder, and for full font generation from a subset of reference characters. We will provide the evaluation and training code soon.
 
-You can download our pretrained checkpoints from our [`latest release`](). Demo data may be found under [/demo_data](./demo_data/) folder. Stay tuned for a possible update for full dataset accessibility.
-
 Part of the code found here was inspired by the work from [DeepSVG](https://github.com/alexandre01/deepsvg). The base model is built on top of their Transformer-based autoencoder with incremental improvements, and a simplified version of their Deep Learning SVG Library is included.
 
 # Main contributions
@@ -37,8 +35,9 @@ pip install -e .
 
 # Inference
 
-To run a pretrained checkpoint, an inference interface is provided both for the [`variational autoencoder`](./src/vae/scripts/inference.py) and for [`font generative model`](./src/genai/scripts/inference.py). For a usage guide, you may run the demo notebooks, which include:
+To run a pretrained checkpoint, an inference interface is provided both for the [`variational autoencoder`](./designet/vae/tools.py) and for the [`font generative model`](./designet/tools.py). For a usage guide, you may run the demo notebooks, which include:
 
+* Downloading our pretrained checkpoints.
 * Both self and cross reconstruction.
 * Visualizing outputs and exporting them to SVG format.
 * Latent space interpolation.
@@ -48,13 +47,13 @@ To run a pretrained checkpoint, an inference interface is provided both for the 
 
 ```bibtex
 @misc{guijavaliente2026designetlearningdrawvector,
-      title={DesigNet: Learning to Draw Vector Graphics as Designers Do}, 
+      title={DesigNet: Learning to Draw Vector Graphics as Designers Do},
       author={Tomas Guija-Valiente and Iago Suárez},
       year={2026},
       eprint={2604.06494},
       archivePrefix={arXiv},
       primaryClass={cs.CV},
-      url={https://arxiv.org/abs/2604.06494}, 
+      url={https://arxiv.org/abs/2604.06494},
 }
 ```
 
