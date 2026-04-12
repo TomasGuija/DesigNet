@@ -19,7 +19,6 @@ from designet.vae.diff_refinement import (
 from designet.vae.tools import (
     _ensure_bgs,
     _to_device,
-    plot_word_from_glyph_set,
     svg_from_cmd_args,
 )
 
