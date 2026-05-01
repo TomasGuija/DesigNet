@@ -5,9 +5,7 @@ from torch.nn.modules.normalization import LayerNorm
 from designet.difflib.tensor import SVGTensor
 
 from .layers.fcn import FCN, HierarchFCN
-from .layers.positional_encoding import (
-    PositionalEncodingSinCos,
-)
+from .layers.positional_encoding import PositionalEncodingSinCos
 from .layers.transformer import (
     TransformerDecoder,
     TransformerDecoderLayerGlobalImproved,
