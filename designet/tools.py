@@ -11,16 +11,53 @@ from designet.checkpoint import (
     normalize_state_dict_keys,
     resolve_checkpoint_path,
 )
+from designet.geometry import compute_continuity_tensor, compute_line_alignment_tensor
 from designet.model import FontConditionalSVGTransformer
+from designet.svg_utils import (
+    center_svg,
+    index_svg_paths,
+    load_svg_as_tensor_sample,
+    svg_from_cmd_args,
+    to_cp,
+)
+from designet.tensor_utils import (
+    PAD_VAL,
+    _ensure_bgs,
+    _to_device,
+    build_svgtensors,
+    check_required_columns,
+    collate_cat_samples,
+    collate_stack_samples,
+    ensure_batch_dim,
+    sequence_length_mask,
+    stack_font_glyph_samples,
+    stack_svgtensors,
+)
 from designet.vae.diff_refinement import (
     SoftAlignmentRefinerBatched,
     SoftContinuityRefinerBatched,
 )
-from designet.vae.tools import (
-    _ensure_bgs,
-    _to_device,
-    svg_from_cmd_args,
-)
+
+
+def fix_positional_encoding_shapes(state_dict, model):
+    """Adapt older positional encoding tensors to the current checkpoint layout."""
+    fixed = dict(state_dict)
+
+    for key, value in list(fixed.items()):
+        if key not in model.state_dict():
+            continue
+
+        target = model.state_dict()[key]
+        if value.shape == target.shape:
+            continue
+
+        if value.ndim == 3 and target.ndim == 2 and value.shape[1] == 1:
+            squeezed = value.squeeze(1)
+            if squeezed.shape == target.shape:
+                fixed[key] = squeezed
+                print(f"[shape fix] squeezed {key}: {tuple(value.shape)} -> {tuple(squeezed.shape)}")
+
+    return fixed
 
 
 def load_designet_model(
@@ -28,20 +65,24 @@ def load_designet_model(
     device: str | torch.device = "cpu",
     strict: bool = True,
 ) -> tuple[FontConditionalSVGTransformer, Dict[str, Any], Dict[str, Any]]:
-    """Load model from a checkpoint. Pass ``None`` to download from HuggingFace Hub."""
-    if checkpoint is None:
-        checkpoint = resolve_checkpoint_path(HF_REPO_ID, _HF_DESIGNET_FILE)
-    ckpt = torch.load(checkpoint, map_location=device, weights_only=False)
+    """Load a DesigNet checkpoint. Pass ``None`` to use the default Hugging Face checkpoint."""
+    if isinstance(checkpoint, dict):
+        ckpt = checkpoint
+    else:
+        if checkpoint is None:
+            checkpoint = resolve_checkpoint_path(HF_REPO_ID, _HF_DESIGNET_FILE)
+
+        ckpt = torch.load(checkpoint, map_location=device, weights_only=False)
     cfg = ckpt["hyper_parameters"]
     cfg["n_commands"] = 5
     cfg["num_encoding_glyphs"] = len(cfg["encoding_glyphs"])
     cfg["num_decoding_glyphs"] = len(cfg["decoding_glyphs"])
     model = FontConditionalSVGTransformer(cfg)
 
-    raw_state_dict = ckpt["state_dict"]
-    state_dict = normalize_state_dict_keys(raw_state_dict)
-
+    state_dict = normalize_state_dict_keys(ckpt["state_dict"])
+    state_dict = fix_positional_encoding_shapes(state_dict, model)
     missing, unexpected = model.load_state_dict(state_dict, strict=strict)
+
     model.to(device)
     model.eval()
 
@@ -65,11 +106,7 @@ def _build_conditioning_from_inputs(
     sel_self: torch.Tensor,
     sel_cross: torch.Tensor,
 ) -> tuple[torch.Tensor, Optional[torch.Tensor]]:
-    """Build decoder conditioning tensors from model inputs.
-
-    Returns:
-            (conditioned_embeddings, conditioned_group_embeddings)
-    """
+    """Build decoder conditioning tensors from model inputs."""
     bsz, _, num_groups, _ = input_commands.shape
 
     encoding_commands = input_commands[:, : model.num_encoding_letters, :, :].flatten(0, 1)
@@ -124,14 +161,13 @@ def _decode_from_conditioning(
     sel_cross: torch.Tensor,
     close_paths: bool,
 ) -> Dict[str, Any]:
-    """Decode from pre-computed conditioning tensors into full-font tensors."""
+    """Decode from precomputed conditioning tensors into full-font tensors."""
     bsz = sel_self.shape[0]
     k_self = sel_self.shape[1]
     k_cross = sel_cross.shape[1]
     n_letters = k_self + k_cross
 
     out_logits = model.base_model.decoder(conditioned_embeddings, z_path=conditioned_group_embeddings)
-
     out_logits = {k: v.unflatten(0, (bsz, n_letters)) for k, v in out_logits.items()}
 
     def split_logits(x: torch.Tensor) -> tuple[torch.Tensor, torch.Tensor]:
@@ -384,27 +420,24 @@ def save_reconstructed_font_svgs(
     if len(names) != n:
         raise ValueError(f"Expected {n} glyph names, got {len(names)}")
 
-    def _save_one_batch(*, b: int, dst: Path) -> List[Path]:
+    def save_one_batch(*, b: int, dst: Path) -> List[Path]:
         dst.mkdir(parents=True, exist_ok=True)
         cmds = cmds_all[b]
         args = args_all[b]
         paths: List[Path] = []
         for i in range(n):
-            svg = svg_from_cmd_args(
-                cmds[i],
-                args[i],
-            )
+            svg = svg_from_cmd_args(cmds[i], args[i])
             out_path = dst / f"{names[i]}.svg"
             svg.save_svg(out_path)
             paths.append(out_path)
         return paths
 
     if batch_size == 1:
-        return _save_one_batch(b=0, dst=output_dir)
+        return save_one_batch(b=0, dst=output_dir)
 
     all_saved: List[Path] = []
     for b in range(batch_size):
-        all_saved.extend(_save_one_batch(b=b, dst=output_dir / f"batch_{b:03d}"))
+        all_saved.extend(save_one_batch(b=b, dst=output_dir / f"batch_{b:03d}"))
     return all_saved
 
 
@@ -415,8 +448,7 @@ def refine_output_with_soft_refinement(
     align_min_conf: float = 0.0,
     cont_min_conf: float = 0.0,
 ) -> Dict[str, Any]:
-    """Apply alignment+continuity soft refinement directly to model output logits."""
-
+    """Apply alignment and continuity soft refinement directly to DesigNet output logits."""
     required = ("self_command_logits", "cross_command_logits", "self_args_logits", "cross_args_logits")
     missing = [k for k in required if k not in output]
     if missing:
@@ -527,3 +559,28 @@ def refine_output_with_soft_refinement(
     refined_output["self_refined_args_logits"] = refined_self
     refined_output["cross_refined_args_logits"] = refined_cross
     return refined_output
+
+
+__all__ = [
+    "load_designet_model",
+    "reconstruct_font",
+    "interpolate_two_fonts_linear",
+    "save_reconstructed_font_svgs",
+    "refine_output_with_soft_refinement",
+    "svg_from_cmd_args",
+    "load_svg_as_tensor_sample",
+    "index_svg_paths",
+    "center_svg",
+    "to_cp",
+    "PAD_VAL",
+    "build_svgtensors",
+    "stack_svgtensors",
+    "ensure_batch_dim",
+    "stack_font_glyph_samples",
+    "collate_stack_samples",
+    "collate_cat_samples",
+    "check_required_columns",
+    "sequence_length_mask",
+    "compute_continuity_tensor",
+    "compute_line_alignment_tensor",
+]

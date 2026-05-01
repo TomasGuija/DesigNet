@@ -1,7 +1,7 @@
 from __future__ import annotations
 
 from pathlib import Path
-from typing import Any, Dict, List, Optional, Sequence
+from typing import Any, Dict, Optional, Sequence
 
 import torch
 
@@ -11,7 +11,15 @@ from designet.checkpoint import (
     normalize_state_dict_keys,
     resolve_checkpoint_path,
 )
-from designet.difflib.utils import build_svg_from_pred_cmds
+from designet.svg_utils import (
+    plot_reconstruction,
+    plot_svg,
+    plot_svg_comparison,
+    plot_word_from_glyph_set,
+    save_svg_from_cmd_args,
+    svg_from_cmd_args,
+)
+from designet.tensor_utils import _ensure_bgs, _to_device
 from designet.vae.diff_refinement import (
     SoftAlignmentRefinerBatched,
     SoftContinuityRefinerBatched,
@@ -19,27 +27,24 @@ from designet.vae.diff_refinement import (
 from designet.vae.svg_transformer import SVGTransformer
 
 
-# ---------------------------------------------------------------------
-# Checkpoint / config helpers
-# ---------------------------------------------------------------------
 def load_vae_model(
     checkpoint: Dict[str, Any] | str | Path | None = None,
     device: str | torch.device = "cpu",
-    strict: bool = True,
+    strict: bool = False,
 ) -> tuple[SVGTransformer, Dict[str, Any], Dict[str, Any]]:
-    """Load model from a checkpoint. Pass ``None`` to download from HuggingFace Hub."""
+    """Load a VAE checkpoint. Pass ``None`` to use the default Hugging Face checkpoint."""
+    if isinstance(checkpoint, dict):
+        ckpt = checkpoint
+    else:
+        if checkpoint is None or not Path(checkpoint).exists():
+            checkpoint = resolve_checkpoint_path(HF_REPO_ID, _HF_VAE_FILE)
 
-    if checkpoint is None or not Path(checkpoint).exists():
-        checkpoint = resolve_checkpoint_path(HF_REPO_ID, _HF_VAE_FILE)
-
-    ckpt = torch.load(checkpoint, map_location=device, weights_only=False)
+        ckpt = torch.load(checkpoint, map_location=device, weights_only=False)
     cfg = ckpt["hyper_parameters"]
     cfg["num_groups_proposal"] = cfg["max_num_groups"]
     model = SVGTransformer(cfg)
 
-    raw_state_dict = ckpt["state_dict"]
-    state_dict = normalize_state_dict_keys(raw_state_dict)
-
+    state_dict = normalize_state_dict_keys(ckpt["state_dict"])
     missing, unexpected = model.load_state_dict(state_dict, strict=strict)
 
     model.to(device)
@@ -57,61 +62,10 @@ def load_vae_model(
     return model, cfg, ckpt
 
 
-# ---------------------------------------------------------------------
-# Input helpers
-# ---------------------------------------------------------------------
-def _to_device(value: Any, device: str | torch.device) -> Any:
-    if torch.is_tensor(value):
-        return value.to(device)
-    if isinstance(value, dict):
-        return {k: _to_device(v, device) for k, v in value.items()}
-    if isinstance(value, (list, tuple)):
-        return type(value)(_to_device(v, device) for v in value)
-    return value
-
-
-def _ensure_bgs(logits: torch.Tensor, args: torch.Tensor, name: str = "logits") -> torch.Tensor:
-    """
-    Ensure logits are shaped (B,G,S,C) to match args shaped (B,G,S,D).
-    Accepts either (B,G,S,C) or (B,S,G,C).
-    """
-    if args.ndim != 4:
-        raise ValueError(f"args must be 4D (B,G,S,D), got shape {tuple(args.shape)}")
-
-    b, g, s, _ = args.shape
-    if logits.ndim != 4:
-        raise ValueError(f"{name} must be 4D, got shape {tuple(logits.shape)}")
-
-    if logits.shape[:3] == (b, g, s):
-        return logits
-    if logits.shape[:3] == (b, s, g):
-        return logits.permute(0, 2, 1, 3).contiguous()
-
-    raise RuntimeError(
-        f"{name} has shape {tuple(logits.shape)} but expected " f"(B,G,S,C)={(b, g, s)} or (B,S,G,C)={(b, s, g)}"
-    )
-
-
-# ---------------------------------------------------------------------
-# Refinement module
-# ---------------------------------------------------------------------
 @torch.no_grad()
-def refine_output_with_soft_refinement(
-    output: Dict[str, Any],
-) -> Dict[str, Any]:
+def refine_output_with_soft_refinement(output: Dict[str, Any]) -> Dict[str, Any]:
     """
-    Apply alignment+continuity soft refinement to a model output dict.
-
-    Required output keys:
-      - command_logits
-      - args_logits
-      - cont_logits
-      - alignment_logits
-
-    Returns:
-      A copy of output with refined args in:
-      - args_logits
-      - refined_args_logits
+    Apply alignment and continuity soft refinement to a VAE output dictionary.
     """
     required = ("command_logits", "args_logits", "cont_logits", "alignment_logits")
     missing = [k for k in required if k not in output]
@@ -141,7 +95,6 @@ def refine_output_with_soft_refinement(
     refiner = SoftContinuityRefinerBatched(tau=1.0)
 
     refined_args = aligner(pred_cmds, pred_args, align_logits)
-
     cont6 = refiner(pred_cmds, refined_args[..., -6:], cont_logits)
     refined_args[..., -6:-2] = cont6[..., :-2]
 
@@ -151,9 +104,6 @@ def refine_output_with_soft_refinement(
     return refined_output
 
 
-# ---------------------------------------------------------------------
-# Inference APIs
-# ---------------------------------------------------------------------
 @torch.no_grad()
 def encode_sample(
     model: SVGTransformer,
@@ -161,12 +111,12 @@ def encode_sample(
     device: str | torch.device = "cpu",
 ):
     sample_dev = _to_device(sample, device)
-    model_inputs = {
-        "commands": sample_dev["commands"],
-        "args": sample_dev["args"],
-    }
-
-    return model(**model_inputs, encode_mode=True, return_tgt=False)
+    return model(
+        commands=sample_dev["commands"],
+        args=sample_dev["args"],
+        encode_mode=True,
+        return_tgt=False,
+    )
 
 
 @torch.no_grad()
@@ -176,12 +126,7 @@ def reconstruct(
     device: str | torch.device = "cpu",
     close_paths: bool = True,
 ):
-    """
-    Reconstruct from model inputs using greedy decoding.
-
-    Works for both single samples and already-collated batches as long as
-    the input dict contains "commands" and "args" in model-expected shapes.
-    """
+    """Reconstruct model inputs using greedy decoding."""
     model_inputs = _to_device(sample, device)
 
     commands_y, args_y = model.greedy_sample(
@@ -196,256 +141,6 @@ def reconstruct(
     }
 
 
-def _select_single_item_if_batched(
-    commands: torch.Tensor,
-    args: torch.Tensor,
-) -> tuple[torch.Tensor, torch.Tensor]:
-    """
-    Align tensors to the unbatched shape expected by build_svg_from_pred_cmds.
-
-    Accepts:
-      - commands: (G, S) or (1, G, S)
-      - args: (G, S, A) or (1, G, S, A)
-    """
-    if commands.ndim == 3:
-        if commands.shape[0] != 1:
-            raise ValueError(
-                "Batched commands with batch size > 1 are not supported for single SVG "
-                "rendering. Slice one sample before calling svg_from_cmd_args."
-            )
-        commands = commands[0]
-    elif commands.ndim != 2:
-        raise ValueError(f"Unexpected commands shape {tuple(commands.shape)}; expected (G,S) or (1,G,S).")
-
-    if args.ndim == 4:
-        if args.shape[0] != 1:
-            raise ValueError(
-                "Batched args with batch size > 1 are not supported for single SVG "
-                "rendering. Slice one sample before calling svg_from_cmd_args."
-            )
-        args = args[0]
-    elif args.ndim != 3:
-        raise ValueError(f"Unexpected args shape {tuple(args.shape)}; expected (G,S,A) or (1,G,S,A).")
-
-    return commands, args
-
-
-def svg_from_cmd_args(
-    commands: torch.Tensor,
-    args: torch.Tensor,
-):
-    """
-    Build an SVG object from command/argument tensors.
-
-    Args:
-        commands: Command tensor (G,S) or optionally batched (1,G,S).
-        args: Args tensor (G,S,A) or optionally batched (1,G,S,A).
-        tighten_viewbox: If True, call SVG.tighten_viewbox() before returning.
-        allow_empty: Passed through to build_svg_from_pred_cmds.
-
-    Returns:
-        SVG instance.
-
-    Raises:
-        ValueError if SVG is empty or invalid.
-    """
-    commands, args = _select_single_item_if_batched(commands, args)
-
-    svg = build_svg_from_pred_cmds(commands, args, allow_empty=True)
-
-    if svg is None:
-        raise ValueError("SVG is empty or invalid")
-
-    svg.tighten_viewbox()
-
-    if svg.empty() or svg.bbox() is None:
-        raise ValueError("SVG is empty or invalid")
-
-    return svg
-
-
-def plot_svg(
-    svg,
-    *,
-    ax=None,
-    title: Optional[str] = None,
-    show_handles: bool = True,
-):
-    """
-    Plot a single SVG.
-
-    Returns:
-        (fig, ax)
-    """
-    from matplotlib import pyplot as plt
-
-    owns_axis = ax is None
-    if owns_axis:
-        fig, ax = plt.subplots(1, 1, figsize=(6, 6))
-    else:
-        fig = ax.figure
-
-    svg.draw_matplotlib(ax, show_handles=show_handles)
-
-    if title is not None:
-        ax.set_title(title)
-    ax.axis("off")
-
-    if owns_axis:
-        fig.tight_layout()
-
-    return fig, ax
-
-
-def plot_svg_comparison(
-    left_svg,
-    right_svg,
-    *,
-    left_title: str = "Left",
-    right_title: str = "Right",
-    show_handles: bool = True,
-    figsize: tuple[float, float] = (15, 5),
-):
-    """
-    Plot two SVGs side by side.
-
-    Returns:
-        (fig, axs)
-    """
-    from matplotlib import pyplot as plt
-
-    fig, axs = plt.subplots(1, 2, figsize=figsize)
-
-    plot_svg(
-        left_svg,
-        ax=axs[0],
-        title=left_title,
-        show_handles=show_handles,
-    )
-    plot_svg(
-        right_svg,
-        ax=axs[1],
-        title=right_title,
-        show_handles=show_handles,
-    )
-
-    fig.tight_layout()
-    return fig, axs
-
-
-def plot_reconstruction(
-    sample: Dict[str, Any],
-    reconstruction: Dict[str, Any],
-    *,
-    show_handles: bool = True,
-    left_title: str = "Original",
-    right_title: str = "Reconstruction",
-    figsize: tuple[float, float] = (15, 5),
-):
-    """
-    Convenience helper that converts tensors to SVGs and plots original vs reconstruction.
-
-    Returns:
-        dict containing SVGs and matplotlib figure/axes.
-    """
-    if "commands" not in sample or "args" not in sample:
-        raise KeyError("Sample must contain 'commands' and 'args'")
-
-    sample_svg = svg_from_cmd_args(
-        sample["commands"],
-        sample["args"],
-    )
-
-    if "commands" not in reconstruction or "args" not in reconstruction:
-        raise KeyError("Reconstruction must contain 'commands' and 'args'")
-
-    recon_svg = svg_from_cmd_args(
-        reconstruction["commands"],
-        reconstruction["args"],
-    )
-
-    fig, axs = plot_svg_comparison(
-        sample_svg,
-        recon_svg,
-        left_title=left_title,
-        right_title=right_title,
-        show_handles=show_handles,
-        figsize=figsize,
-    )
-
-    return {
-        "sample_svg": sample_svg,
-        "recon_svg": recon_svg,
-        "fig": fig,
-        "axs": axs,
-    }
-
-
-def plot_word_from_glyph_set(
-    glyph_commands: torch.Tensor,
-    glyph_args: torch.Tensor,
-    *,
-    word: str,
-    glyph_names: Sequence[str],
-    show_handles: bool = True,
-    panel_size: tuple[float, float] = (1.8, 2.2),
-    title: Optional[str] = None,
-):
-    """Plot one word from a glyph set in a single row."""
-    from matplotlib import pyplot as plt
-
-    if not word:
-        raise ValueError("word must be a non-empty string")
-
-    name_to_idx = {str(g): i for i, g in enumerate(glyph_names)}
-    indices: List[int] = []
-    for ch in word:
-        if ch not in name_to_idx:
-            raise KeyError(f"Glyph '{ch}' not found in glyph_names")
-        indices.append(name_to_idx[ch])
-
-    n = len(indices)
-    fig, axs = plt.subplots(1, n, figsize=(panel_size[0] * n, panel_size[1]), squeeze=False)
-
-    for j, idx in enumerate(indices):
-        svg = svg_from_cmd_args(glyph_commands[idx], glyph_args[idx])
-        svg.draw_matplotlib(axs[0][j], show_handles=show_handles)
-        axs[0][j].axis("off")
-
-    if title is None:
-        title = word
-    fig.suptitle(title)
-    fig.tight_layout(rect=[0.0, 0.0, 1.0, 0.92])
-    fig.subplots_adjust(wspace=max(0.0, float(0.02)))
-    return fig, axs
-
-
-def save_svg_from_cmd_args(
-    commands: torch.Tensor,
-    args: torch.Tensor,
-    output_path: str | Path,
-):
-    """
-    Convert command/arg tensors into an SVG and save it to disk.
-
-    Returns:
-        dict containing the SVG object and resolved output path.
-    """
-    svg = svg_from_cmd_args(
-        commands,
-        args,
-    )
-
-    output_path = Path(output_path)
-    output_path.parent.mkdir(parents=True, exist_ok=True)
-    svg.save_svg(output_path)
-
-    return {
-        "svg": svg,
-        "path": output_path,
-    }
-
-
 @torch.no_grad()
 def decode_from_latent(
     model: SVGTransformer,
@@ -455,10 +150,7 @@ def decode_from_latent(
     hierarch_logits: Optional[torch.Tensor] = None,
     close_paths: bool = True,
 ):
-    """
-    Decode directly from a latent code.
-    Useful once you already have z2 (and optionally z1) from encode_sample().
-    """
+    """Decode directly from latent codes returned by ``encode_sample``."""
     z2 = _to_device(z2, device)
     z1 = _to_device(z1, device)
     hierarch_logits = _to_device(hierarch_logits, device)
@@ -486,12 +178,7 @@ def interpolate_two_glyphs_linear(
     device: str | torch.device = "cpu",
     close_paths: bool = True,
 ) -> Dict[str, Any]:
-    """
-    Interpolate between two single glyph samples in latent space.
-
-    This is the minimal interpolation API: callers can iterate externally over
-    many glyphs/fonts and call this function per pair.
-    """
+    """Linearly interpolate between two single-glyph samples in latent space."""
     if not alphas:
         raise ValueError("alphas must contain at least one value")
     alpha_values = [float(a) for a in alphas]
@@ -516,7 +203,7 @@ def interpolate_two_glyphs_linear(
         if a is None and b is None:
             return None
         if a is None or b is None:
-            raise ValueError("Both tensors must be present (or both None) for interpolation")
+            raise ValueError("Both tensors must be present, or both None, for interpolation")
         if a.shape != b.shape:
             raise ValueError(
                 f"Interpolation tensors must have the same shape; got {tuple(a.shape)} vs {tuple(b.shape)}"
@@ -537,12 +224,7 @@ def interpolate_two_glyphs_linear(
             close_paths=close_paths,
         )
         outputs.append({"alpha": alpha, **pred})
-
-        svg = svg_from_cmd_args(
-            pred["commands"],
-            pred["args"],
-        )
-        svgs.append(svg)
+        svgs.append(svg_from_cmd_args(pred["commands"], pred["args"]))
 
     return {
         "alphas": alpha_values,
@@ -551,3 +233,19 @@ def interpolate_two_glyphs_linear(
         "sample_a": sample_a,
         "sample_b": sample_b,
     }
+
+
+__all__ = [
+    "load_vae_model",
+    "refine_output_with_soft_refinement",
+    "encode_sample",
+    "reconstruct",
+    "decode_from_latent",
+    "interpolate_two_glyphs_linear",
+    "svg_from_cmd_args",
+    "save_svg_from_cmd_args",
+    "plot_svg",
+    "plot_svg_comparison",
+    "plot_reconstruction",
+    "plot_word_from_glyph_set",
+]
