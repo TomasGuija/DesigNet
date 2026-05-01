@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import math
 import re
 from typing import List, Tuple
 from xml.dom import minidom
@@ -207,6 +208,10 @@ class SVGPath:
             i_geom.scale(factor)
         return self
 
+    def numericalize(self, n=256, round_coords=True):
+        for command in self.all_commands():
+            command.numericalize(n, round_coords)
+
     def bbox(self):
         return union_bbox([cmd.bbox() for cmd in self.path_commands])
 
@@ -243,3 +248,18 @@ class SVGPath:
             codes.append(CLOSEPOLY)
 
         return vertices, codes
+
+    def sample_points(self, max_dist=0.4):
+        points = []
+
+        for command in self.path_commands:
+            try:
+                length = command.length()
+                n = max(math.ceil(length / max_dist), 1)
+                sampled = command.sample_points(n=n, return_array=True)
+                if sampled is not None and len(sampled) > 0:
+                    points.extend(sampled)
+            except (NotImplementedError, AttributeError, ValueError, TypeError):
+                # Skip command if length or sampling fails
+                continue
+        return points

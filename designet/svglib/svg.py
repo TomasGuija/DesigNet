@@ -6,9 +6,9 @@ from xml.dom import expatbuilder
 import numpy as np
 import torch
 
-from .geom import Bbox, Point, union_bbox
-from .svg_path import SVGPath
-from .svg_primitive import SVGLine, SVGPathGroup
+from designet.svglib.geom import Bbox, Point, union_bbox
+from designet.svglib.svg_path import SVGPath
+from designet.svglib.svg_primitive import SVGLine, SVGPathGroup
 
 
 class SVG:
@@ -94,14 +94,53 @@ class SVG:
             "</svg>"
         )
 
+    def to_str_single_path(
+        self,
+        fill=False,
+        with_points=False,
+        with_handles=False,
+        with_bboxes=False,
+        with_markers=False,
+        color_firstlast=False,
+        with_moves=True,
+        color="black",
+        size: int = 256,
+    ) -> str:
+        viz_elements = self._get_viz_elements(with_points, with_handles, with_bboxes, color_firstlast, with_moves)
+
+        height = self.viewbox.size.y
+        transform = f'transform="scale(1,-1) translate(0, {-height})"'
+
+        # Merge all path commands together
+        path_chunks = []
+
+        for svg_path_group in [*self.svg_path_groups, *viz_elements]:
+            d = svg_path_group.to_str_commands_only().strip()
+
+            if d and not d[-1].lower() == "z":
+                d += " Z"
+
+            path_chunks.append(d)
+
+        path_data = " ".join(path_chunks)
+
+        # Only one place for fill attributes
+        fill_attr = f'fill="{color}" fill-rule="evenodd"' if fill else 'fill="none" stroke="black"'
+
+        return (
+            f'<svg xmlns="http://www.w3.org/2000/svg" viewBox="{self.viewbox.to_str()}" height="{size}" width="{size}">'
+            f'{self._markers() if with_markers else ""}'
+            f"<g {transform}>"
+            f'<path {fill_attr} d="{path_data}" />'
+            "</g>"
+            "</svg>"
+        )
+
     def to_tensor(self, concat_groups=True, PAD_VAL=-1):
         group_tensors = [p.to_tensor(PAD_VAL=PAD_VAL) for p in self.svg_path_groups]
         if concat_groups:
             return torch.cat(group_tensors, dim=0)
         return group_tensors
-
-    def to_fillings(self):
-        return [p.path.filling for p in self.svg_path_groups]
 
     @staticmethod
     def from_tensor(tensor: torch.Tensor, viewbox: Bbox = None, allow_empty=False):
@@ -128,8 +167,6 @@ class SVG:
         fill=False,
         show_points=True,
         show_handles=True,
-        flip_y=False,
-        padding=0.06,
     ):
         import matplotlib.patches as patches
         import matplotlib.pyplot as plt
@@ -151,6 +188,17 @@ class SVG:
 
                 verts = np.asarray(vertices, dtype=float)
                 codes_arr = np.asarray(codes, dtype=np.uint8)
+
+                if fill:
+                    filled_patch = patches.PathPatch(
+                        Path(verts, codes_arr),
+                        facecolor="black",
+                        edgecolor="none",
+                        lw=0,
+                        clip_on=False,
+                    )
+                    filled_patch.set_fillrule("evenodd")
+                    ax.add_patch(filled_patch)
 
                 i = 0
                 prev = None
@@ -205,7 +253,7 @@ class SVG:
                         ax.add_patch(
                             patches.PathPatch(
                                 Path(seg_verts, seg_codes),
-                                facecolor=("black" if fill else "none"),
+                                facecolor="none",
                                 edgecolor="#06d6a0",
                                 lw=3,
                                 clip_on=False,
@@ -258,9 +306,6 @@ class SVG:
                     prev = v
                     i += 1
 
-    def draw(self, *args, **kwargs):
-        return self.draw_matplotlib(*args, **kwargs)
-
     def _apply_to_paths(self, method, *args, **kwargs):
         for path_group in self.svg_path_groups:
             getattr(path_group, method)(*args, **kwargs)
@@ -275,6 +320,9 @@ class SVG:
 
     def empty(self):
         return len(self.svg_path_groups) == 0
+
+    def copy(self):
+        return SVG([svg_path_group.copy() for svg_path_group in self.svg_path_groups], self.viewbox.copy())
 
     def translate(self, vec: Point):
         return self._apply_to_paths("translate", vec)
@@ -301,3 +349,47 @@ class SVG:
             points = points[idx]
 
         return points
+
+    def zoom(self, factor, center: Point = None):
+        if center is None:
+            center = self.viewbox.center
+
+        self.translate(-self.viewbox.center)
+        self._apply_to_paths("scale", factor)
+        self.translate(center)
+
+        return self
+
+    def normalize(self, viewbox: Bbox = None, padding: float = 0.0):
+        if viewbox is None:
+            viewbox = Bbox(24)
+
+        # Get content bounds
+        content_bbox = self.bbox()
+        if content_bbox is None:
+            return self
+
+        if (content_bbox.size.x * content_bbox.size.y) < 1e-10:
+            return self
+
+        # Add padding to avoid stroke clipping
+        padded_xy = content_bbox.xy - Point(padding, padding)
+        padded_wh = content_bbox.size + Point(padding * 2, padding * 2)
+        padded_bbox = Bbox(padded_xy.x, padded_xy.y, padded_wh.x, padded_wh.y)
+
+        # Scale to fit the padded content into target viewbox
+        scale_factor = viewbox.size.min() / padded_bbox.size.max()
+        self.zoom(scale_factor, center=padded_bbox.center)
+
+        # Translate to align top-left to (0,0)
+        new_bbox = self.bbox()  # Recalculate after zoom
+        self.translate(-new_bbox.xy)
+
+        # Set the new viewbox
+        self.viewbox = viewbox
+
+        return self
+
+    def numericalize(self, n=256, round_coords=True):
+        self.normalize(viewbox=Bbox(n))
+        return self._apply_to_paths("numericalize", n, round_coords)

@@ -122,6 +122,9 @@ class SVGPathGroup(SVGPrimitive):
         d_attr = " ".join(svg_path.to_str() for svg_path in self.svg_paths)
         return f'<path {fill_attr} {marker_attr} filling="{self.path.filling}" d="{d_attr}"></path>'
 
+    def numericalize(self, n=256, round_coords=True):
+        return self._apply_to_paths("numericalize", n, round_coords)
+
     def to_str_commands_only(self):
         return " ".join(svg_path.to_str() for svg_path in self.svg_paths)
 
