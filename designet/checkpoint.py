@@ -6,9 +6,9 @@ from typing import Dict
 import torch
 from huggingface_hub import hf_hub_download
 
-HF_REPO_ID = "iago-suarez/DesigNet"
-_HF_DESIGNET_FILE = "DesigNet.ckpt.zip"
-_HF_VAE_FILE = "VAE.ckpt.zip"
+HF_REPO_ID = "TomasGuija/DesigNet"
+_HF_DESIGNET_FILE = "DesigNet.ckpt"
+_HF_VAE_FILE = "VAE.ckpt"
 
 
 def resolve_checkpoint_path(path: str, hf_filename: str = _HF_DESIGNET_FILE) -> str:
