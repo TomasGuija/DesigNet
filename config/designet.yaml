@@ -1,0 +1,68 @@
+seed_everything: 100
+
+model:
+  dropout: 0.1
+  n_layers: 4
+  n_layers_decode: 4
+  n_heads: 8
+  dim_feedforward: 512
+  d_model: 256
+  dim_z: 256
+  max_num_groups: 4
+  max_seq_len: 32
+  max_total_len: 64
+  encoding_glyphs: ["H", "a", "m", "b", "u", "r", "g", "e"]
+  decoding_glyphs: ["A", "B", "C", "c", "D", "d", "E", "F", "f", "G", "h", "I", "i", "J", "j", "K", "k", "L", "l", "M", "N", "n", "O", "o", "P", "p", "Q", "q", "R", "S", "s", "T", "t", "U", "V", "v", "W", "w", "X", "x", "Y", "y", "Z", "z"]
+  learning_rate: 1.0e-4
+  weight_decay: 0.0
+  loss_cmd_weight: 1.0
+  loss_args_weight: 10000.0
+  loss_visibility_weight: 1.0
+  loss_continuity_weight: 1.0
+  loss_alignment_weight: 1.0
+  loss_consistency_weight: 5000.0
+  loss_aux_weight: 5000.0
+  loss_kl_weight: 10.0
+  kl_warmup_steps: 10000
+  kl_tolerance: 0.1
+  cross_reconstruction_multiplier: 1.5
+  train_with_refinement: false
+  compile_model: false
+  vae_checkpoint: null
+  designet_weights: null
+
+data:
+  data_dir: data/LatinFontsSVGs
+  train_csv_path: data/train.csv
+  val_csv_path: data/val.csv
+  test_csv_path: data/test.csv
+  max_num_groups: 4
+  max_seq_len: 32
+  max_total_len: 64
+  encoding_letters: ["H", "a", "m", "b", "u", "r", "g", "e"]
+  decoding_letters: ["A", "B", "C", "c", "D", "d", "E", "F", "f", "G", "h", "I", "i", "J", "j", "K", "k", "L", "l", "M", "N", "n", "O", "o", "P", "p", "Q", "q", "R", "S", "s", "T", "t", "U", "V", "v", "W", "w", "X", "x", "Y", "y", "Z", "z"]
+  batch_size: 8
+  num_workers: 0
+  pin_memory: false
+  persistent_workers: false
+
+trainer:
+  accelerator: auto
+  devices: 1
+  max_epochs: 1000
+  callbacks:
+    - class_path: lightning.pytorch.callbacks.LearningRateMonitor
+      init_args:
+        logging_interval: step
+    - class_path: lightning.pytorch.callbacks.ModelCheckpoint
+      init_args:
+        monitor: val_loss
+        mode: min
+        save_top_k: 1
+        save_last: true
+        filename: best-{epoch}-{val_loss:.4f}
+  logger:
+    class_path: lightning.pytorch.loggers.CSVLogger
+    init_args:
+      save_dir: runs
+      name: designet

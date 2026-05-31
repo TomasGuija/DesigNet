@@ -19,7 +19,7 @@ class FontConditionalSVGTransformer(
         self.cfg = cfg
         self.base_model = SVGTransformer(cfg)
 
-        base_model_ckpt = cfg.get("vae_checkpoint", cfg.get("checkpoint_path", None))
+        base_model_ckpt = cfg.get("vae_checkpoint")
         if base_model_ckpt:
             base_model_ckpt = resolve_checkpoint_path(base_model_ckpt)
             state = torch.load(base_model_ckpt, map_location="cpu", weights_only=False)
