@@ -10,17 +10,13 @@ import torch
 
 from designet.difflib.tensor import SVGTensor
 
-ARG_WIDTH_8 = 8
-
 
 def compute_endpoint_consistency_loss(
     commands: torch.Tensor,
     args: torch.Tensor,
 ) -> torch.Tensor:
     """Encourage explicit start/end points in the 8-argument representation to agree."""
-    batch_size, num_groups, seq_len, arg_width = args.shape
-    if arg_width != ARG_WIDTH_8:
-        raise ValueError("Endpoint consistency loss is only valid for 8-argument SVG tensors.")
+    batch_size, num_groups, seq_len, _ = args.shape
 
     start_pos = args[..., :2]
     end_pos = args[..., -2:]
@@ -65,10 +61,6 @@ def sample_predicted_auxiliary_points(
     The command targets decide whether each position is sampled as a line or as
     a cubic curve.
     """
-    _, _, _, arg_width = pred_args.shape
-    if arg_width != ARG_WIDTH_8:
-        raise ValueError("Auxiliary point loss expects 8-argument SVG tensors.")
-
     start = pred_args[..., :2]
     ctrl1 = pred_args[..., 2:4]
     ctrl2 = pred_args[..., 4:6]
