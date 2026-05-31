@@ -2,9 +2,9 @@ import torch
 import torch.nn as nn
 from huggingface_hub import PyTorchModelHubMixin
 
-from .checkpoint import resolve_checkpoint_path
-from .vae.svg_transformer import SVGTransformer
-from .vae.utils import _sample_categorical, _threshold_sample
+from designet.checkpoint import normalize_state_dict_keys, resolve_checkpoint_path
+from designet.vae.svg_transformer import SVGTransformer
+from designet.vae.utils import _sample_categorical, _threshold_sample
 
 
 class FontConditionalSVGTransformer(
@@ -19,12 +19,13 @@ class FontConditionalSVGTransformer(
         self.cfg = cfg
         self.base_model = SVGTransformer(cfg)
 
-        base_model_ckpt = cfg.get("checkpoint_path", None)
+        base_model_ckpt = cfg.get("vae_checkpoint", cfg.get("checkpoint_path", None))
         if base_model_ckpt:
             base_model_ckpt = resolve_checkpoint_path(base_model_ckpt)
             state = torch.load(base_model_ckpt, map_location="cpu", weights_only=False)
-            state_dict = state["state_dict"]
-            clean_state_dict = {k.replace("model.", ""): v for k, v in state_dict.items() if k.startswith("model.")}
+            state_dict = normalize_state_dict_keys(state["state_dict"])
+            base_model_keys = self.base_model.state_dict().keys()
+            clean_state_dict = {key: value for key, value in state_dict.items() if key in base_model_keys}
             self.base_model.load_state_dict(clean_state_dict)
 
         self.num_encoding_letters = cfg["num_encoding_glyphs"]
