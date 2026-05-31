@@ -6,9 +6,9 @@ from xml.dom import minidom
 import numpy as np
 import torch
 
-from .geom import Point, Radius, union_bbox
-from .svg_command import SVGCommandLine
-from .svg_path import SVGPath
+from designet.svglib.geom import Point, Radius, union_bbox
+from designet.svglib.svg_command import SVGCommandLine
+from designet.svglib.svg_path import SVGPath
 
 
 class SVGPrimitive:
