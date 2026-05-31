@@ -4,15 +4,15 @@ from torch.nn.modules.normalization import LayerNorm
 
 from designet.difflib.tensor import SVGTensor
 
-from .layers.fcn import FCN, HierarchFCN
-from .layers.positional_encoding import PositionalEncodingSinCos
-from .layers.transformer import (
+from designet.vae.layers.fcn import FCN, HierarchFCN
+from designet.vae.layers.positional_encoding import PositionalEncodingSinCos
+from designet.vae.layers.transformer import (
     TransformerDecoder,
     TransformerDecoderLayerGlobalImproved,
     TransformerEncoder,
     TransformerEncoderLayerImproved,
 )
-from .utils import (
+from designet.vae.utils import (
     _get_key_padding_mask,
     _get_key_visibility_mask,
     _get_padding_mask,
@@ -38,7 +38,6 @@ class SVGTransformer(nn.Module):
         super().__init__()
 
         self.cfg = cfg
-        self.args_dim = cfg["args_dim"] + 1
 
         self.encoder = TwoLevelEncoder(cfg)
 
@@ -373,11 +372,9 @@ class DecoderL(nn.Module):
         decoder_norm = LayerNorm(cfg["d_model"])
         self.decoder = TransformerDecoder(decoder_layer, cfg["n_layers_decode"], decoder_norm)
 
-        args_dim = cfg["args_dim"] + 1
         self.fcn = FCN(
             cfg["d_model"],
             cfg["n_commands"],
-            args_dim=args_dim,
         )
 
     def forward(self, z, z_path=None, visibility_logits=None):
