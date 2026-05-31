@@ -164,3 +164,37 @@ class SVGTensor:
             return self.get_data(self.all_arg_keys)
 
         return self.get_data(self.arg_keys)
+
+    def sample_auxiliary_points(self) -> Tensor:
+        """
+        Sample three interior points for each drawable command.
+
+        Invalid positions, including MOVE, EOS, SOS, and padding, are filled
+        with ``PAD_VAL``. The output is shaped ``(seq_len, 3, 2)``.
+        """
+        t_vals = self.end_pos.new_tensor([0.25, 0.5, 0.75]).view(3, 1)
+        commands = self.cmds().long()
+
+        aux_points = self.end_pos.new_full(
+            (commands.size(0), 3, 2),
+            fill_value=float(self.PAD_VAL),
+        )
+
+        line_id = self.COMMANDS_SIMPLIFIED.index("l")
+        cubic_id = self.COMMANDS_SIMPLIFIED.index("c")
+
+        for i, command in enumerate(commands.tolist()):
+            if command == line_id:
+                aux_points[i] = self.start_pos[i].unsqueeze(0) + t_vals * (
+                    self.end_pos[i] - self.start_pos[i]
+                ).unsqueeze(0)
+            elif command == cubic_id:
+                one_minus_t = 1.0 - t_vals
+                aux_points[i] = (
+                    one_minus_t.pow(3) * self.start_pos[i]
+                    + 3.0 * one_minus_t.pow(2) * t_vals * self.control1[i]
+                    + 3.0 * one_minus_t * t_vals.pow(2) * self.control2[i]
+                    + t_vals.pow(3) * self.end_pos[i]
+                )
+
+        return aux_points
