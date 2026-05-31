@@ -39,3 +39,9 @@ env.bak/
 venv.bak/
 
 demo_outputs/
+checkpoints/
+runs/
+data/
+.vscode/
+.codex
+hf_designet_release/
