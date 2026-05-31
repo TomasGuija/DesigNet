@@ -6,12 +6,10 @@ class FCN(nn.Module):
         self,
         d_model,
         n_commands,
-        args_dim=256,
     ):
         super().__init__()
 
         self.n_args = 8
-        self.args_dim = args_dim
 
         self.command_fcn = nn.Linear(d_model, n_commands)
 
