@@ -211,6 +211,8 @@ def evaluate_vae(
             eval_l1=eval_l1,
             eval_continuity=eval_continuity,
             eval_alignment=eval_alignment,
+            gt_continuity=batch.get("continuity"),
+            gt_alignment=batch.get("alignment"),
         )
         extend_results(all_results, batch_results)
 
