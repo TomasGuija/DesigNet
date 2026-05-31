@@ -3,7 +3,6 @@ import torch.nn as nn
 from torch.nn.modules.normalization import LayerNorm
 
 from designet.difflib.tensor import SVGTensor
-
 from designet.vae.layers.fcn import FCN, HierarchFCN
 from designet.vae.layers.positional_encoding import PositionalEncodingSinCos
 from designet.vae.layers.transformer import (
