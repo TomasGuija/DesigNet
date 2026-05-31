@@ -124,7 +124,7 @@ def stack_font_glyph_samples(
         args_key: args,
     }
 
-    for key in ("continuity", "alignment"):
+    for key in ("continuity", "alignment", "aux_points"):
         if all(key in g for g in glyph_samples):
             value = torch.stack([g[key] for g in glyph_samples], dim=0)
             if batch:
