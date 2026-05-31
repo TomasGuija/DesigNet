@@ -35,6 +35,9 @@ class FontDataset(Dataset):
         max_total_len: int | None = None,
         encoding_letters: Sequence[str] | None = None,
         decoding_letters: Sequence[str] | None = None,
+        compute_continuity: bool = False,
+        compute_line_alignment: bool = False,
+        compute_auxiliary_points: bool = False,
     ) -> None:
         self.data_dir = Path(data_dir)
         self.csv_path = Path(csv_path)
@@ -44,6 +47,9 @@ class FontDataset(Dataset):
 
         self.encoding_letters = list(encoding_letters or [])
         self.decoding_letters = list(decoding_letters or [])
+        self.compute_continuity = compute_continuity
+        self.compute_line_alignment = compute_line_alignment
+        self.compute_auxiliary_points = compute_auxiliary_points
 
         self.encoding_cp = [to_cp(letter) for letter in self.encoding_letters]
         self.decoding_cp = [to_cp(letter) for letter in self.decoding_letters]
@@ -126,6 +132,9 @@ class FontDataset(Dataset):
                     max_seq_len=self.max_seq_len,
                     pad_val=PAD_VAL,
                     center=True,
+                    compute_continuity=self.compute_continuity,
+                    compute_line_alignment=self.compute_line_alignment,
+                    compute_auxiliary_points=self.compute_auxiliary_points,
                     batch=False,
                 )
             )
@@ -139,4 +148,9 @@ class FontDataset(Dataset):
 
     @staticmethod
     def collate_fn(samples: list[Dict[str, Any]]) -> Dict[str, Any]:
-        return collate_stack_samples(samples, meta_keys=("font_dir",))
+        tensor_keys = ["commands", "args"]
+        for key in ("continuity", "alignment", "aux_points"):
+            if all(key in sample for sample in samples):
+                tensor_keys.append(key)
+
+        return collate_stack_samples(samples, tensor_keys=tensor_keys, meta_keys=("font_dir",))
