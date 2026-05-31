@@ -80,6 +80,7 @@ def load_svg_as_tensor_sample(
     center: bool = True,
     compute_continuity: bool = False,
     compute_line_alignment: bool = False,
+    compute_auxiliary_points: bool = False,
     batch: bool = False,
 ) -> Dict[str, torch.Tensor]:
     """Load one SVG file and return grouped command/argument tensors."""
@@ -116,6 +117,9 @@ def load_svg_as_tensor_sample(
     if compute_line_alignment:
         out["alignment"] = torch.stack([compute_line_alignment_tensor(c, a[..., -6:]) for c, a in zip(commands, args)])
 
+    if compute_auxiliary_points:
+        out["aux_points"] = torch.stack([tensor.sample_auxiliary_points() for tensor in tensors])
+
     if batch:
         out["commands"] = ensure_batch_dim(out["commands"], expected_ndim_without_batch=2)
         out["args"] = ensure_batch_dim(out["args"], expected_ndim_without_batch=3)
@@ -125,6 +129,9 @@ def load_svg_as_tensor_sample(
 
         if "alignment" in out:
             out["alignment"] = ensure_batch_dim(out["alignment"], expected_ndim_without_batch=2)
+
+        if "aux_points" in out:
+            out["aux_points"] = ensure_batch_dim(out["aux_points"], expected_ndim_without_batch=4)
 
     return out
 
