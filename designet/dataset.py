@@ -9,6 +9,8 @@ from huggingface_hub import snapshot_download
 HF_DATASET_REPO_ID = "TomasGuija/LatinFontsSVGs"
 HF_DATASET_ARCHIVE = "LatinFontsSVGs.zip"
 DEFAULT_DATA_ROOT = Path("data")
+DATASET_DIR_NAME = "LatinFontsSVGs"
+DEFAULT_DATASET_DIR = DEFAULT_DATA_ROOT / DATASET_DIR_NAME
 DEFAULT_REQUIRED_GB = 5.0
 
 
@@ -24,13 +26,25 @@ def resolve_dataset_path(
 ) -> str:
     """
     Return the local SVG dataset directory.
+
+    ``path`` must point to the SVG dataset directory itself, e.g.
+    ``data/LatinFontsSVGs``. When omitted, the public dataset is downloaded
+    under ``data/LatinFontsSVGs`` if it is not already present.
     """
-    data_root = Path(path) if path is not None else DEFAULT_DATA_ROOT
-    dataset_dir = data_root / "LatinFontsSVGs"
+    dataset_dir = Path(path) if path is not None else DEFAULT_DATASET_DIR
 
     if dataset_dir.exists():
-        return str(dataset_dir)
+        if _looks_like_svg_dataset_dir(dataset_dir):
+            return str(dataset_dir)
+        raise ValueError(
+            f"Dataset directory does not look like an SVG dataset root: {dataset_dir}. "
+            "Expected a directory containing paths like family_*/font_*/*.svg."
+        )
 
+    if path is not None:
+        raise FileNotFoundError(f"Dataset directory not found: {dataset_dir}")
+
+    data_root = dataset_dir.parent
     data_root.mkdir(parents=True, exist_ok=True)
 
     if not has_enough_disk_space(data_root, required_gb):
@@ -62,3 +76,7 @@ def resolve_dataset_path(
 
     print(f"Dataset ready at {dataset_dir}")
     return str(dataset_dir)
+
+
+def _looks_like_svg_dataset_dir(path: Path) -> bool:
+    return path.is_dir() and any(path.glob("family_*/font_*/*.svg"))
