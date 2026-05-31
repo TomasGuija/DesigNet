@@ -194,15 +194,15 @@ class SVGVAELightningModule(L.LightningModule):
             "loss_aux_weight": self.loss_aux_weight,
         }
 
-    def _load_model_weights(self, checkpoint_path: str | Path) -> None:
-        checkpoint = torch.load(checkpoint_path, map_location="cpu", weights_only=False)
+    def _load_model_weights(self, weights_path: str | Path) -> None:
+        checkpoint = torch.load(weights_path, map_location="cpu", weights_only=False)
         state_dict = checkpoint.get("state_dict", checkpoint)
         state_dict = normalize_state_dict_keys(state_dict)
         missing, unexpected = self.model.load_state_dict(state_dict, strict=False)
 
         if missing:
-            rank_zero_warn(f"Missing keys when loading VAE weights from {checkpoint_path}: {missing}")
+            rank_zero_warn(f"Missing keys when loading VAE weights from {weights_path}: {missing}")
         if unexpected:
-            rank_zero_warn(f"Unexpected keys when loading VAE weights from {checkpoint_path}: {unexpected}")
+            rank_zero_warn(f"Unexpected keys when loading VAE weights from {weights_path}: {unexpected}")
         if not missing and not unexpected:
-            rank_zero_info(f"Loaded VAE weights from {checkpoint_path} with no missing or unexpected keys.")
+            rank_zero_info(f"Loaded VAE weights from {weights_path} with no missing or unexpected keys.")
