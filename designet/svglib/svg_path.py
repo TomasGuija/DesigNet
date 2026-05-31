@@ -8,9 +8,9 @@ from xml.dom import minidom
 import numpy as np
 import torch
 
-from ..difflib.tensor import SVGTensor
-from .geom import Bbox, Point, union_bbox
-from .svg_command import SVGCommand, SVGCommandClose, SVGCommandMove
+from designet.difflib.tensor import SVGTensor
+from designet.svglib.geom import Bbox, Point, union_bbox
+from designet.svglib.svg_command import SVGCommand, SVGCommandClose, SVGCommandMove
 
 COMMANDS = "MmZzLlHhVvCcSsQqTtAa"
 COMMAND_RE = re.compile(r"([MmZzLlHhVvCcSsQqTtAa])")
