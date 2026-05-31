@@ -186,13 +186,16 @@ def geometric_constraint_correctness(
     pred_args: torch.Tensor,
     *,
     constraint: str,
+    gt_labels: torch.Tensor | None = None,
 ) -> list[float]:
     """
     Compare geometry-derived continuity/alignment labels for decoded SVG tensors.
 
     The ground-truth tensors are expected to include SOS. Predicted tensors are
     expected to come from greedy decoding without SOS, so SOS is prepended before
-    labels are computed. Only valid ground-truth constraint positions are scored.
+    predicted labels are computed. If ``gt_labels`` is provided, it is used
+    directly; otherwise ground-truth labels are recomputed from geometry.
+    Only valid ground-truth constraint positions are scored.
     """
     if constraint == "continuity":
         label_fn = compute_continuity_tensor
@@ -209,6 +212,9 @@ def geometric_constraint_correctness(
             "Expected command tensors shaped (N,G,S). " f"Got gt={tuple(gt_cmds.shape)}, pred={tuple(pred_cmds.shape)}"
         )
 
+    if gt_labels is not None and gt_labels.ndim != 3:
+        raise ValueError(f"Expected gt_labels shaped (N,G,S), got {tuple(gt_labels.shape)}")
+
     if gt_args.ndim != 4 or pred_args.ndim != 4:
         raise ValueError(
             "Expected argument tensors shaped (N,G,S,D). "
@@ -222,6 +228,12 @@ def geometric_constraint_correctness(
             f"gt_args={tuple(gt_args.shape)}, pred_args={tuple(pred_args.shape)}"
         )
 
+    if gt_labels is not None and gt_labels.shape[:2] != pred_cmds.shape[:2]:
+        raise ValueError(
+            "Ground-truth labels and predicted tensors must have matching sample/group dimensions. "
+            f"Got gt_labels={tuple(gt_labels.shape)}, pred_cmds={tuple(pred_cmds.shape)}"
+        )
+
     pred_cmds, pred_args = _prepend_sos(pred_cmds, pred_args)
 
     correctness: list[float] = []
@@ -229,12 +241,15 @@ def geometric_constraint_correctness(
 
     for sample_idx in range(n_samples):
         for group_idx in range(n_groups):
-            gt_labels = label_fn(gt_cmds[sample_idx, group_idx], gt_args[sample_idx, group_idx])
+            if gt_labels is None:
+                gt_labels_i = label_fn(gt_cmds[sample_idx, group_idx], gt_args[sample_idx, group_idx])
+            else:
+                gt_labels_i = gt_labels[sample_idx, group_idx]
             pred_labels = label_fn(pred_cmds[sample_idx, group_idx], pred_args[sample_idx, group_idx])
 
-            seq_len = min(gt_labels.size(0), pred_labels.size(0))
-            valid = gt_labels[:seq_len] != -1
+            seq_len = min(gt_labels_i.size(0), pred_labels.size(0))
+            valid = gt_labels_i[:seq_len] != -1
             if valid.any():
-                correctness.extend(pred_labels[:seq_len][valid].eq(gt_labels[:seq_len][valid]).float().cpu().tolist())
+                correctness.extend(pred_labels[:seq_len][valid].eq(gt_labels_i[:seq_len][valid]).float().cpu().tolist())
 
     return correctness
