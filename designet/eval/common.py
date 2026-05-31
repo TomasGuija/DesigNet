@@ -7,7 +7,7 @@ from typing import Dict, List, Optional
 import torch
 
 from designet.difflib.tensor import SVGTensor
-from designet.eval.losses import (
+from designet.eval.metrics import (
     compute_iou,
     compute_l1,
     geometric_constraint_correctness,
@@ -106,6 +106,8 @@ def evaluate_svg_batch(
     eval_l1: bool = True,
     eval_continuity: bool = False,
     eval_alignment: bool = False,
+    gt_continuity: torch.Tensor | None = None,
+    gt_alignment: torch.Tensor | None = None,
 ) -> MetricResults:
     """
     Compute glyph-level metrics for a decoded SVG batch.
@@ -123,6 +125,7 @@ def evaluate_svg_batch(
                 pred_cmds=pred_cmds,
                 pred_args=pred_args,
                 constraint="continuity",
+                gt_labels=gt_continuity,
             )
         )
 
@@ -134,6 +137,7 @@ def evaluate_svg_batch(
                 pred_cmds=pred_cmds,
                 pred_args=pred_args,
                 constraint="alignment",
+                gt_labels=gt_alignment,
             )
         )
 
